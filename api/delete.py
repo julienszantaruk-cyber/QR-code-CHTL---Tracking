@@ -1,12 +1,21 @@
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 import os, json, hashlib
-from supabase import create_client
+from supabase import create_client, Client
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 ADMIN_PASS = os.environ.get("ADMIN_PASS", "admin123")
 SESSION_SECRET = os.environ.get("SESSION_SECRET", "change-me-secret-key")
+
+# Cache du client Supabase
+_db: Client | None = None
+
+def get_db() -> Client:
+    global _db
+    if _db is None:
+        _db = create_client(SUPABASE_URL, SUPABASE_KEY)
+    return _db
 
 def check_auth(cookie_header):
     if not cookie_header:
@@ -26,7 +35,8 @@ class handler(BaseHTTPRequestHandler):
         qr_id = query.get("id", [""])[0]
         
         if qr_id:
-            db = create_client(SUPABASE_URL, SUPABASE_KEY)
+            db = get_db()
+            # On supprime d'abord les scans (FK), puis le QR
             db.table("scans").delete().eq("qr_id", qr_id).execute()
             db.table("qr_codes").delete().eq("id", qr_id).execute()
         
