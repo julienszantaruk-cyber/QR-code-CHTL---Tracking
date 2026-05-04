@@ -3,5 +3,11 @@
     { "source": "/api/delete/(.*)", "destination": "/api/delete?id=$1" },
     { "source": "/s/(.*)", "destination": "/api/scan?id=$1" },
     { "source": "/((?!api/).*)", "destination": "/api/index" }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron-ping",
+      "schedule": "0 9 * * *"
+    }
   ]
 }
