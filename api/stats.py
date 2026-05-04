@@ -1,11 +1,20 @@
 from http.server import BaseHTTPRequestHandler
 import os, json, hashlib
-from supabase import create_client
+from supabase import create_client, Client
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 ADMIN_PASS = os.environ.get("ADMIN_PASS", "admin123")
 SESSION_SECRET = os.environ.get("SESSION_SECRET", "change-me-secret-key")
+
+# Cache du client Supabase
+_db: Client | None = None
+
+def get_db() -> Client:
+    global _db
+    if _db is None:
+        _db = create_client(SUPABASE_URL, SUPABASE_KEY)
+    return _db
 
 def check_auth(cookie_header):
     if not cookie_header:
@@ -21,13 +30,18 @@ class handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         
-        db = create_client(SUPABASE_URL, SUPABASE_KEY)
+        db = get_db()
         codes = db.table("qr_codes").select("*, scans(count)").execute().data
         
         result = []
         for c in codes:
             scan_count = c.get("scans", [{}])[0].get("count", 0) if c.get("scans") else 0
-            result.append({"id": c["id"], "label": c["label"], "target_url": c["target_url"], "scan_count": scan_count})
+            result.append({
+                "id": c["id"],
+                "label": c["label"],
+                "target_url": c["target_url"],
+                "scan_count": scan_count
+            })
         
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
