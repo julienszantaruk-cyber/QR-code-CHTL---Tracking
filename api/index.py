@@ -1,14 +1,20 @@
 from http.server import BaseHTTPRequestHandler
 import json, qrcode, io, base64, os
-from supabase import create_client
+from supabase import create_client, Client
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 ADMIN_PASS = os.environ.get("ADMIN_PASS", "admin123")
 SESSION_SECRET = os.environ.get("SESSION_SECRET", "change-me-secret-key")
 
-def get_db():
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+# Cache du client Supabase (lazy init + réutilisation sur warm starts)
+_db: Client | None = None
+
+def get_db() -> Client:
+    global _db
+    if _db is None:
+        _db = create_client(SUPABASE_URL, SUPABASE_KEY)
+    return _db
 
 def check_auth(cookie_header):
     if not cookie_header:
@@ -70,9 +76,9 @@ class handler(BaseHTTPRequestHandler):
             input:focus {{ border-color:#58a6ff; outline:none; }}
             .btn {{ padding:10px 20px; background:#238636; color:white; border:none; border-radius:6px; cursor:pointer; font-weight:bold; }}
             .btn-dl {{ background:#238636; color:white; padding:6px 12px; border-radius:6px; text-decoration:none; display:inline-block; margin-bottom:4px; }}
-            .btn-del {{ background:#da3633; color:white; padding:6px 12px; border-radius:6px; border:none; cursor:pointer; }}
-            .updated {{ animation:flash .5s; }}
-            @keyframes flash {{ 0%{{background:#238636}} 100%{{background:transparent}} }}
+            .btn-del {{ background:#da3633; color:white; padding:6px 12px; border:none; border-radius:6px; cursor:pointer; }}
+            .updated {{ animation:flash 0.6s; }}
+            @keyframes flash {{ 0%{{background:#3fb95040}} 100%{{background:transparent}} }}
         </style></head>
         <body>
             <div class="topbar">
