@@ -42,6 +42,31 @@ def esc(value) -> str:
 
 
 class handler(BaseHTTPRequestHandler):
+    def _send_security_headers(self) -> None:
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header(
+            "Strict-Transport-Security",
+            "max-age=31536000; includeSubDomains",
+        )
+        # 'unsafe-inline' nécessaire pour le <style> et <script> inline
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "script-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; "
+            "connect-src 'self'; "
+            "form-action 'self'; "
+            "base-uri 'none'; "
+            "frame-ancestors 'none'",
+        )
+        self.send_header(
+            "Permissions-Policy",
+            "geolocation=(), microphone=(), camera=(), payment=()",
+        )
+
     def do_GET(self) -> None:
         if not check_auth(self.headers.get("Cookie", "")):
             self.send_response(303)
@@ -84,7 +109,9 @@ class handler(BaseHTTPRequestHandler):
                 </td>
             </tr>"""
 
-        html_page = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+        html_page = f"""<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="robots" content="noindex, nofollow">
         <title>QR Tracker</title>
         <style>
             body {{ font-family:system-ui; max-width:1000px; margin:2rem auto; padding:1rem; background:#0d1117; color:#e6edf3; }}
@@ -153,8 +180,6 @@ class handler(BaseHTTPRequestHandler):
 
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("X-Frame-Options", "DENY")
-        self.send_header("Referrer-Policy", "no-referrer")
+        self._send_security_headers()
         self.end_headers()
         self.wfile.write(html_page.encode())
