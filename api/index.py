@@ -1,14 +1,20 @@
 from http.server import BaseHTTPRequestHandler
-import json, qrcode, io, base64, os
+import base64
+import hashlib
+import hmac
+import html
+import io
+import os
+import qrcode
 from supabase import create_client, Client
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
-ADMIN_PASS = os.environ.get("ADMIN_PASS", "admin123")
-SESSION_SECRET = os.environ.get("SESSION_SECRET", "change-me-secret-key")
+ADMIN_PASS = os.environ["ADMIN_PASS"]
+SESSION_SECRET = os.environ["SESSION_SECRET"]
 
-# Cache du client Supabase (lazy init + réutilisation sur warm starts)
 _db: Client | None = None
+
 
 def get_db() -> Client:
     global _db
@@ -16,48 +22,69 @@ def get_db() -> Client:
         _db = create_client(SUPABASE_URL, SUPABASE_KEY)
     return _db
 
-def check_auth(cookie_header):
+
+def check_auth(cookie_header: str | None) -> bool:
     if not cookie_header:
         return False
-    cookies = dict(c.strip().split("=", 1) for c in cookie_header.split(";") if "=" in c)
-    import hashlib
+    try:
+        cookies = dict(
+            c.strip().split("=", 1) for c in cookie_header.split(";") if "=" in c
+        )
+    except Exception:
+        return False
     expected = hashlib.sha256(f"{ADMIN_PASS}{SESSION_SECRET}".encode()).hexdigest()
-    return cookies.get("session") == expected
+    return hmac.compare_digest(cookies.get("session", ""), expected)
+
+
+def esc(value) -> str:
+    """Échappe systématiquement les valeurs avant injection dans le HTML."""
+    return html.escape(str(value or ""), quote=True)
+
 
 class handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        cookie = self.headers.get("Cookie", "")
-        if not check_auth(cookie):
+    def do_GET(self) -> None:
+        if not check_auth(self.headers.get("Cookie", "")):
             self.send_response(303)
             self.send_header("Location", "/api/login")
             self.end_headers()
             return
-        
-        db = get_db()
-        codes = db.table("qr_codes").select("*, scans(count)").execute().data
-        
+
+        try:
+            db = get_db()
+            codes = db.table("qr_codes").select("*, scans(count)").execute().data or []
+        except Exception as e:
+            print(f"[index] DB error: {e}")
+            codes = []
+
         base = f"https://{self.headers.get('Host', 'localhost')}"
         rows = ""
         for c in codes:
-            scan_count = c.get("scans", [{}])[0].get("count", 0) if c.get("scans") else 0
-            track_url = f"{base}/s/{c['id']}"
+            scan_count = (
+                c.get("scans", [{}])[0].get("count", 0) if c.get("scans") else 0
+            )
+            qr_id = c["id"]
+            label = c.get("label", "")
+            target = c.get("target_url", "")
+
+            track_url = f"{base}/s/{qr_id}"
             img = qrcode.make(track_url)
             buf = io.BytesIO()
             img.save(buf, format="PNG")
             qr_b64 = base64.b64encode(buf.getvalue()).decode()
-            
-            rows += f"""<tr id="row-{c['id']}">
-                <td style="font-weight:bold">{c['label']}</td>
-                <td><a href="{c['target_url']}" target="_blank">{c['target_url'][:50]}</a></td>
-                <td class="scan-count" data-id="{c['id']}" style="text-align:center;font-size:1.4rem;font-weight:bold">{scan_count}</td>
-                <td><img src="data:image/png;base64,{qr_b64}" width="120"></td>
+
+            # 🔒 Toutes les valeurs venant de la DB sont échappées
+            rows += f"""<tr id="row-{esc(qr_id)}">
+                <td style="font-weight:bold">{esc(label)}</td>
+                <td><a href="{esc(target)}" target="_blank" rel="noopener noreferrer">{esc(target[:50])}</a></td>
+                <td class="scan-count" data-id="{esc(qr_id)}" style="text-align:center;font-size:1.4rem;font-weight:bold">{int(scan_count)}</td>
+                <td><img src="data:image/png;base64,{qr_b64}" width="120" alt="QR {esc(label)}"></td>
                 <td>
-                    <a href="data:image/png;base64,{qr_b64}" download="{c['label']}.png" class="btn-dl">Telecharger</a>
-                    <button onclick="deleteQR('{c['id']}')" class="btn-del">Supprimer</button>
+                    <a href="data:image/png;base64,{qr_b64}" download="{esc(label)}.png" class="btn-dl">Telecharger</a>
+                    <button onclick="deleteQR('{esc(qr_id)}')" class="btn-del">Supprimer</button>
                 </td>
             </tr>"""
 
-        html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+        html_page = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
         <title>QR Tracker</title>
         <style>
             body {{ font-family:system-ui; max-width:1000px; margin:2rem auto; padding:1rem; background:#0d1117; color:#e6edf3; }}
@@ -86,8 +113,8 @@ class handler(BaseHTTPRequestHandler):
                 <a href="/api/logout" class="logout">Deconnexion</a>
             </div>
             <form method="POST" action="/api/create">
-                <input name="label" placeholder="Nom du QR" required>
-                <input name="target_url" placeholder="https://exemple.com" size="40" required>
+                <input name="label" placeholder="Nom du QR" required maxlength="200">
+                <input name="target_url" placeholder="https://exemple.com" size="40" required maxlength="2000">
                 <button class="btn" type="submit">+ Creer un QR</button>
             </form>
             <table>
@@ -114,7 +141,7 @@ class handler(BaseHTTPRequestHandler):
                 }},5000);
                 async function deleteQR(id){{
                     if(!confirm('Supprimer ce QR code ?'))return;
-                    const r=await fetch('/api/delete/'+id,{{method:'DELETE'}});
+                    const r=await fetch('/api/delete/'+encodeURIComponent(id),{{method:'DELETE'}});
                     if(r.ok){{
                         document.getElementById('row-'+id)?.remove();
                         if(!document.querySelectorAll('[id^="row-"]').length)
@@ -123,8 +150,11 @@ class handler(BaseHTTPRequestHandler):
                 }}
             </script>
         </body></html>"""
-        
+
         self.send_response(200)
-        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
         self.end_headers()
-        self.wfile.write(html.encode())
+        self.wfile.write(html_page.encode())
