@@ -3,7 +3,6 @@ from urllib.parse import parse_qs
 import hashlib
 import hmac
 import os
-import html
 
 # === Variables obligatoires (plus de fallback faible) ===
 ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
@@ -12,7 +11,9 @@ SESSION_SECRET = os.environ["SESSION_SECRET"]
 
 MAX_BODY_SIZE = 4 * 1024  # 4 KB suffisent largement pour un form de login
 
-LOGIN_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8">
+LOGIN_HTML = """<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
 <title>QR Tracker - Connexion</title>
 <style>
     body { font-family:system-ui; background:#0d1117; color:#e6edf3; display:flex; justify-content:center; align-items:center; min-height:100vh; margin:0; }
@@ -46,11 +47,32 @@ def constant_time_eq(a: str, b: str) -> bool:
 
 
 class handler(BaseHTTPRequestHandler):
+    def _send_security_headers(self) -> None:
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header(
+            "Strict-Transport-Security",
+            "max-age=31536000; includeSubDomains",
+        )
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; "
+            "form-action 'self'; "
+            "base-uri 'none'; "
+            "frame-ancestors 'none'",
+        )
+        self.send_header(
+            "Permissions-Policy",
+            "geolocation=(), microphone=(), camera=(), payment=()",
+        )
+
     def _render(self, error_html: str = "", status: int = 200) -> None:
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("X-Frame-Options", "DENY")
+        self._send_security_headers()
         self.end_headers()
         self.wfile.write(LOGIN_HTML.replace("%%ERROR%%", error_html).encode())
 
@@ -88,6 +110,7 @@ class handler(BaseHTTPRequestHandler):
                 "Set-Cookie",
                 f"session={token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=86400",
             )
+            self._send_security_headers()
             self.end_headers()
         else:
             # On n'expose JAMAIS si c'est le user ou le pass qui est faux
