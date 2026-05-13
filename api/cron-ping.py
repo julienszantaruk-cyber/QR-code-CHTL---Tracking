@@ -1,14 +1,15 @@
 from http.server import BaseHTTPRequestHandler
-import os, json
+import json
+import os
 from supabase import create_client
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 CRON_SECRET = os.environ.get("CRON_SECRET", "")
 
+
 class handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        # Vercel ajoute ce header sur les appels cron
+    def do_GET(self) -> None:
         auth = self.headers.get("Authorization", "")
         if CRON_SECRET and auth != f"Bearer {CRON_SECRET}":
             self.send_response(401)
@@ -18,11 +19,11 @@ class handler(BaseHTTPRequestHandler):
 
         try:
             db = create_client(SUPABASE_URL, SUPABASE_KEY)
-            # Une requête triviale qui réveille la DB
             result = db.table("qr_codes").select("id").limit(1).execute()
-            payload = {"ok": True, "rows": len(result.data)}
+            payload = {"ok": True, "rows": len(result.data or [])}
         except Exception as e:
-            payload = {"ok": False, "error": str(e)}
+            print(f"[cron-ping] error: {e}")
+            payload = {"ok": False}
 
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
